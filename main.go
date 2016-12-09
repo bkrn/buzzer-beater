@@ -1,8 +1,12 @@
 //Package main launches buzzer-beater for door monitoring goodness
 package main
 
-import "fmt"
+import (
+	"bkrn/buzzer-beater/doorserver"
+	"net/http"
+)
 
 func main() {
-	fmt.Println("Hello, this is buzzer-beater!")
+	control := doorserver.NewControl()
+	http.ListenAndServe(":8080", control)
 }
