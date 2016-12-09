@@ -1,0 +1,14 @@
+title = "buzzer-beater"
+
+[owner]
+name = "Aaron Di Silvestro"
+email = "aaron.disilvestro@nike.com"
+
+[application]
+name = "buzzer-beater"
+secret = "" # Fill in production!
+salt = "" # Fill in production!
+
+[database]
+name = "door.db"
+buckets = ["User", "Message"]
