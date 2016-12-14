@@ -6,8 +6,8 @@ email = "aaron.disilvestro@nike.com"
 
 [application]
 name = "buzzer-beater"
-secret = "" # Fill in production!
-salt = "" # Fill in production!
+secret = "c8a5b315002bd4db32630a8ba3b70d10cd4f74ab"
+salt = "d8dcb36de1087e98fcf18bde2eb0316c53ca1e66"
 
 [database]
 name = "door.db"
