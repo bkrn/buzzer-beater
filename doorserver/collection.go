@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"reflect"
 
 	"github.com/asaskevich/govalidator"
 	"github.com/boltdb/bolt"
@@ -23,6 +24,7 @@ type CollectionInterface interface {
 	Post([]byte) (interface{}, error)
 	Patch(int, []byte) (interface{}, error)
 	Delete(int) (interface{}, error)
+	FindByField(string, interface{}) (interface{}, error)
 }
 
 //UserCollection interacts with users
@@ -122,4 +124,36 @@ func (clc *UserCollection) Patch(ID int, data []byte) (interface{}, error) {
 		return b.Put(itob(mdl.ID), buf)
 	})
 	return mdl, err
+}
+
+//FindByField finds the first model by a field
+func (clc *UserCollection) FindByField(field string, value interface{}) (interface{}, error) {
+	mdl := &DoorUser{}
+	err := clc.DB.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte("User"))
+		var found bool
+		b.ForEach(func(k, v []byte) error {
+			if !found {
+				err := json.Unmarshal(v, mdl)
+				if err != nil {
+					return err
+				}
+				r := reflect.ValueOf(mdl)
+				f := reflect.Indirect(r).FieldByName(field)
+				if f == value {
+					found = true
+				}
+			}
+			return nil
+		})
+		if !found {
+			return errors.New("Model not found")
+		}
+		return nil
+	})
+	if err != nil {
+		return &DoorUser{}, err
+	}
+	return mdl, err
+
 }

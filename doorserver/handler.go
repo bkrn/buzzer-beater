@@ -114,9 +114,31 @@ func (cnt *Control) NotFound(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
-//Ring accepts button presses from the AWS lambda
+//Ring accepts button presses from authenticated source
 func (cnt *Control) Ring(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, "Hello!")
+}
+
+//TestAuthenticate returns user if request is has valid authentication
+func (cnt *Control) TestAuthenticate(w http.ResponseWriter, r *http.Request) {
+	validators := strings.Split(r.Header.Get("Authorization"), ":")
+	usr, err := cnt.Collections["users"].FindByField("Name", validators[0])
+	if err != nil || usr.(*DoorUser).Authenticate(validators[1]) != nil {
+		http.Error(w, "Not authorized", http.StatusUnauthorized)
+	} else {
+		cnt.RespondJSON(w, r, usr)
+	}
+}
+
+//Authenticate returns whether the Authorization header is valid
+func (cnt *Control) Authenticate(w http.ResponseWriter, r *http.Request) bool {
+	validators := strings.Split(r.Header.Get("Authorization"), ":")
+	usr, err := cnt.Collections["users"].FindByField("Name", validators[0])
+	if err != nil || usr.(*DoorUser).Authenticate(validators[1]) != nil {
+		http.Error(w, "Not authorized", http.StatusUnauthorized)
+		return false
+	}
+	return true
 }
 
 //GetDB configures and returns the underlying Bolt DB
@@ -154,6 +176,7 @@ func NewControl() *Control {
 
 	//Declare endpoints
 	cnt.Endpoints["POST"]["/ring$"] = cnt.Ring
+	cnt.Endpoints["GET"]["/authtest$"] = cnt.TestAuthenticate
 	cnt.AddCollection("users", &UserCollection{cnt.DB})
 	//cnt.AddCollection("messages", &MessageCollection{cnt.DB})
 
