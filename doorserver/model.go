@@ -50,3 +50,9 @@ func (user *DoorUser) Authenticate(pw string) error {
 }
 
 //DoorMessage stores messages that are served to those ringing the door
+type DoorMessage struct {
+	DoorModel
+	Name  string `json:"name" valid:"alphanum,required"`
+	Image string `json:"image" valid:"optional"`
+	Text  string `json:"text" valid:"alphanum,required"`
+}
