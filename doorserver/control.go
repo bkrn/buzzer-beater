@@ -5,6 +5,7 @@ import (
 	"bkrn/buzzer-beater/config"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"regexp"
@@ -25,6 +26,10 @@ type Control struct {
 
 //Handle accepts requests and routes them
 func (cnt *Control) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ur := strings.ToLower(r.URL.String())
+	if ur != "/" && !strings.HasPrefix(ur, "/public") && !cnt.Authenticate(w, r) {
+		return
+	}
 	if _, exists := cnt.Endpoints[r.Method]; !exists {
 		http.Error(w, fmt.Sprintf("Method %s not accepted", r.Method), http.StatusMethodNotAllowed)
 		return
@@ -75,8 +80,7 @@ func (cnt *Control) AddCollection(name string, clc CollectionInterface) {
 		cnt.RespondJSON(w, r, mdl)
 	}
 	cnt.Endpoints["POST"][fmt.Sprintf("/%s$", name)] = func(w http.ResponseWriter, r *http.Request) {
-		bdy := []byte{}
-		r.Body.Read(bdy)
+		bdy, err := ioutil.ReadAll(r.Body)
 		mdl, err := clc.Post(bdy)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -85,7 +89,7 @@ func (cnt *Control) AddCollection(name string, clc CollectionInterface) {
 		cnt.RespondJSON(w, r, mdl)
 	}
 	cnt.Endpoints["DELETE"][fmt.Sprintf(`/%s/(\d+)$`, name)] = func(w http.ResponseWriter, r *http.Request) {
-		res := regexp.MustCompile(`/%s/(/d+)$`).FindStringSubmatch(strings.ToLower(r.URL.String()))[1]
+		res := regexp.MustCompile(`(\d+)$`).FindStringSubmatch(strings.ToLower(r.URL.String()))[1]
 		resi, err := strconv.ParseInt(res, 10, 0)
 		mdl, err := clc.Delete(int(resi))
 		if err != nil {
@@ -95,9 +99,8 @@ func (cnt *Control) AddCollection(name string, clc CollectionInterface) {
 		cnt.RespondJSON(w, r, mdl)
 	}
 	cnt.Endpoints["PATCH"][fmt.Sprintf(`/%s/(\d+)$`, name)] = func(w http.ResponseWriter, r *http.Request) {
-		bdy := []byte{}
-		r.Body.Read(bdy)
-		res := regexp.MustCompile(`/%s/(/d+)$`).FindStringSubmatch(strings.ToLower(r.URL.String()))[1]
+		bdy, err := ioutil.ReadAll(r.Body)
+		res := regexp.MustCompile(`(\d+)$`).FindStringSubmatch(strings.ToLower(r.URL.String()))[0]
 		resi, err := strconv.ParseInt(res, 10, 0)
 		mdl, err := clc.Patch(int(resi), bdy)
 		if err != nil {
@@ -114,27 +117,43 @@ func (cnt *Control) NotFound(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
-//Ring accepts button presses from authenticated source
-func (cnt *Control) Ring(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprint(w, "Hello!")
+//ServeStatic loads and serves files
+func (cnt *Control) ServeStatic(w http.ResponseWriter, r *http.Request) {
+	pth := strings.TrimPrefix(r.URL.String(), "/")
+	body, err := ioutil.ReadFile(strings.ToLower(pth))
+	if err != nil {
+		cnt.NotFound(w, r)
+		return
+	}
+	fmt.Fprint(w, string(body))
 }
 
-//TestAuthenticate returns user if request is has valid authentication
-func (cnt *Control) TestAuthenticate(w http.ResponseWriter, r *http.Request) {
-	validators := strings.Split(r.Header.Get("Authorization"), ":")
-	usr, err := cnt.Collections["users"].FindByField("Name", validators[0])
-	if err != nil || usr.(*DoorUser).Authenticate(validators[1]) != nil {
-		http.Error(w, "Not authorized", http.StatusUnauthorized)
-	} else {
-		cnt.RespondJSON(w, r, usr)
+//Home loads the main admin page starting with login
+func (cnt *Control) Home(w http.ResponseWriter, r *http.Request) {
+	body, err := ioutil.ReadFile("templates/main.gohtml")
+	if err != nil {
+		cnt.NotFound(w, r)
+		return
 	}
+	fmt.Fprint(w, string(body))
+}
+
+//TestAuthenticate returns user if request is valid authentication
+func (cnt *Control) TestAuthenticate(w http.ResponseWriter, r *http.Request) {
+	un, _, _ := r.BasicAuth()
+	usr, unerr := cnt.Collections["users"].FindByField("Name", un)
+	if unerr != nil {
+		http.Error(w, "Not authorized", http.StatusUnauthorized)
+	}
+	cnt.RespondJSON(w, r, usr)
 }
 
 //Authenticate returns whether the Authorization header is valid
 func (cnt *Control) Authenticate(w http.ResponseWriter, r *http.Request) bool {
-	validators := strings.Split(r.Header.Get("Authorization"), ":")
-	usr, err := cnt.Collections["users"].FindByField("Name", validators[0])
-	if err != nil || usr.(*DoorUser).Authenticate(validators[1]) != nil {
+	un, pw, _ := r.BasicAuth()
+	usr, unerr := cnt.Collections["users"].FindByField("Name", un)
+	pwerr := usr.(*DoorUser).Authenticate(pw)
+	if unerr != nil || pwerr != nil {
 		http.Error(w, "Not authorized", http.StatusUnauthorized)
 		return false
 	}
@@ -175,9 +194,11 @@ func NewControl() *Control {
 	}
 
 	//Declare endpoints
-	cnt.Endpoints["POST"]["/ring$"] = cnt.Ring
-	cnt.Endpoints["GET"]["/authtest$"] = cnt.TestAuthenticate
-	cnt.AddCollection("users", &UserCollection{cnt.DB})
+	cnt.Endpoints["GET"]["/$"] = cnt.Home
+	cnt.Endpoints["GET"]["/auth$"] = cnt.TestAuthenticate
+	cnt.Endpoints["GET"]["/public/.*"] = cnt.ServeStatic
+	cnt.Endpoints["GET"]["/static/.*"] = cnt.ServeStatic
+	cnt.AddCollection("users", NewUserCollection(cnt.DB))
 	//cnt.AddCollection("messages", &MessageCollection{cnt.DB})
 
 	return cnt

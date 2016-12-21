@@ -4,10 +4,10 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
-	"reflect"
+	"strings"
 
 	"github.com/asaskevich/govalidator"
-	"github.com/boltdb/bolt"
+	bolt "github.com/boltdb/bolt"
 )
 
 func itob(v int) []byte {
@@ -19,24 +19,29 @@ func itob(v int) []byte {
 //CollectionInterface is for collecitons. Implements all standard REST Endpoints
 //defferentiating between GET with ID (one) and GET without (all)
 type CollectionInterface interface {
+	//Rest methods
 	Get(int) (interface{}, error)
 	All() (interface{}, error)
 	Post([]byte) (interface{}, error)
 	Patch(int, []byte) (interface{}, error)
 	Delete(int) (interface{}, error)
-	FindByField(string, interface{}) (interface{}, error)
+	//Query methods
+	//TODO GET or ALL with url parameters filters in find by field
+	FindByField(string, string) (interface{}, error)
 }
 
-//UserCollection interacts with users
-type UserCollection struct {
-	DB *bolt.DB
+//DoorCollection is the collection base struct
+type DoorCollection struct {
+	DB             *bolt.DB
+	CollectionName string
+	GetModel       func() DoorModelInterface
 }
 
 //Get returns one user from ID
-func (clc *UserCollection) Get(ID int) (interface{}, error) {
-	mdl := &DoorUser{}
+func (clc *DoorCollection) Get(ID int) (interface{}, error) {
+	mdl := clc.GetModel()
 	err := clc.DB.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte("User"))
+		b := tx.Bucket([]byte(clc.CollectionName))
 		err := json.Unmarshal(b.Get(itob(ID)), mdl)
 		return err
 	})
@@ -44,12 +49,12 @@ func (clc *UserCollection) Get(ID int) (interface{}, error) {
 }
 
 //All returns all users from db
-func (clc *UserCollection) All() (interface{}, error) {
+func (clc *DoorCollection) All() (interface{}, error) {
 	mdls := []interface{}{}
 	err := clc.DB.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte("User"))
+		b := tx.Bucket([]byte(clc.CollectionName))
 		b.ForEach(func(k, v []byte) error {
-			mdl := &DoorUser{}
+			mdl := clc.GetModel()
 			err := json.Unmarshal(v, mdl)
 			mdls = append(mdls, mdl)
 			return err
@@ -60,8 +65,8 @@ func (clc *UserCollection) All() (interface{}, error) {
 }
 
 //Post adds a new user the to database and returns it
-func (clc *UserCollection) Post(data []byte) (interface{}, error) {
-	mdl := &DoorUser{}
+func (clc *DoorCollection) Post(data []byte) (interface{}, error) {
+	mdl := clc.GetModel()
 	err := json.Unmarshal(data, mdl)
 	if err != nil {
 		return mdl, err
@@ -74,29 +79,29 @@ func (clc *UserCollection) Post(data []byte) (interface{}, error) {
 		return mdl, errors.New("Invalid user object")
 	}
 	err = clc.DB.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte("User"))
+		b := tx.Bucket([]byte(clc.CollectionName))
 
 		// Generate ID for the user.
 		// This returns an error only if the Tx is closed or not writeable.
 		// That can't happen in an Update() call so I ignore the error check.
 		id, _ := b.NextSequence()
-		mdl.ID = int(id)
+		mdl.SetID(int(id))
 		var buf []byte
 		buf, err = json.Marshal(mdl)
 		if err != nil {
 			return err
 		}
 
-		return b.Put(itob(mdl.ID), buf)
+		return b.Put(itob(mdl.GetID()), buf)
 	})
 	return mdl, err
 }
 
 //Delete returns
-func (clc *UserCollection) Delete(ID int) (interface{}, error) {
-	mdl := &DoorUser{}
+func (clc *DoorCollection) Delete(ID int) (interface{}, error) {
+	mdl := clc.GetModel()
 	err := clc.DB.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte("User"))
+		b := tx.Bucket([]byte(clc.CollectionName))
 		err := b.Delete(itob(ID))
 		return err
 	})
@@ -104,12 +109,12 @@ func (clc *UserCollection) Delete(ID int) (interface{}, error) {
 }
 
 //Patch updates a user
-func (clc *UserCollection) Patch(ID int, data []byte) (interface{}, error) {
-	mdl := &DoorUser{}
+func (clc *DoorCollection) Patch(ID int, data []byte) (interface{}, error) {
+	mdl := clc.GetModel()
 	err := clc.DB.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte("User"))
+		b := tx.Bucket([]byte(clc.CollectionName))
 		//Get origional values
-		err := json.Unmarshal(b.Get(itob(mdl.ID)), mdl)
+		err := json.Unmarshal(b.Get(itob(ID)), mdl)
 		if err != nil {
 			return err
 		}
@@ -121,26 +126,30 @@ func (clc *UserCollection) Patch(ID int, data []byte) (interface{}, error) {
 		if err != nil {
 			return err
 		}
-		return b.Put(itob(mdl.ID), buf)
+		return b.Put(itob(mdl.GetID()), buf)
 	})
 	return mdl, err
 }
 
 //FindByField finds the first model by a field
-func (clc *UserCollection) FindByField(field string, value interface{}) (interface{}, error) {
-	mdl := &DoorUser{}
+func (clc *DoorCollection) FindByField(field string, value string) (interface{}, error) {
+	mdl := clc.GetModel()
 	err := clc.DB.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte("User"))
+		b := tx.Bucket([]byte(clc.CollectionName))
 		var found bool
 		b.ForEach(func(k, v []byte) error {
 			if !found {
-				err := json.Unmarshal(v, mdl)
+				cmap := map[string]interface{}{}
+				err := json.Unmarshal(v, &cmap)
 				if err != nil {
 					return err
 				}
-				r := reflect.ValueOf(mdl)
-				f := reflect.Indirect(r).FieldByName(field)
-				if f == value {
+				mdlVal, fieldFound := cmap[strings.ToLower(field)]
+				if fieldFound && mdlVal.(string) == value {
+					err := json.Unmarshal(v, mdl)
+					if err != nil {
+						return err
+					}
 					found = true
 				}
 			}
@@ -152,8 +161,15 @@ func (clc *UserCollection) FindByField(field string, value interface{}) (interfa
 		return nil
 	})
 	if err != nil {
-		return &DoorUser{}, err
+		return clc.GetModel(), err
 	}
 	return mdl, err
+}
 
+//NewUserCollection returns a user collection
+func NewUserCollection(db *bolt.DB) *DoorCollection {
+	clc := &DoorCollection{
+		db, "User", func() DoorModelInterface { return &DoorUser{} },
+	}
+	return clc
 }
